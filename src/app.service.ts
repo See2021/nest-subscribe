@@ -1,48 +1,61 @@
 import { Injectable } from '@nestjs/common';
 import * as mqtt from 'mqtt';
 
+interface SensorData {
+  temp: number;
+  humidity: {
+    base: number;
+    relative: number;
+  };
+  rain_gauge: {
+    volume: number;
+    intensity: number;
+    presence: number;
+    fill_percentage: number;
+    threshold: number;
+    drying_time: number;
+  };
+  wind_speed: number;
+  wind_direction: number;
+  pump: {
+    temperature: number;
+    status: number;
+  }
+  water_tank: number
+  fertilizer: number
+}
+
 @Injectable()
 export class AppService {
   private mqttClient: mqtt.MqttClient;
-  private receivedMessages: number[] = [];
+  private receivedMessages: SensorData[] = [];
   private lowTemperature: number | null = null;
   private highTemperature: number | null = null;
 
   constructor() {
     // Connect to MQTT broker
-    this.mqttClient = mqtt.connect('mqtt://mqtt.eclipseprojects.io');
+    this.mqttClient = mqtt.connect('mqtt://172.23.80.1:1883', {
+      username: 'mqtt',
+      password: 'mn403193'
+    });
+
 
     // Subscribe to the "Temperature" topic
     this.mqttClient.on('connect', () => {
       console.log('Connected to MQTT broker');
-      this.mqttClient.subscribe('Temperature', (err) => {
+      this.mqttClient.subscribe('farm/1/sensors/', (err) => {
         if (err) {
           console.error('Failed to subscribe:', err);
         } else {
-          console.log('Subscribed to Temperature topic');
+          console.log('Subscribed to farm topic');
         }
       });
     });
 
-    // this.mqttClient.on('connect', () => {
-    //   console.log('Connected to MQTT broker');
-    //   const topics = ['Temperature', 'Pump', 'Fertilizer', 'Tank'];
-    //   topics.forEach(topic => {
-    //     this.mqttClient.subscribe(topic, (err) => {
-    //       if (err) {
-    //         console.error(`Failed to subscribe to ${topic}:`, err);
-    //       } else {
-    //         console.log(`Subscribed to ${topic} topic`);
-    //       }
-    //     });
-    //   });
-    // });
-
     this.mqttClient.on('message', (topic, message) => {
-      const messageText = message.toString();
-      const temperatureValue = parseFloat(messageText);
-      console.log(`Received message: ${messageText} from topic: ${topic}`);
-      this.receivedMessages.push(temperatureValue);
+      const sensorData: SensorData = JSON.parse(message.toString());
+      this.receivedMessages.push(sensorData);
+      console.log('Received sensor data:', sensorData);
     });
   }
 
@@ -50,20 +63,64 @@ export class AppService {
     return 'Hello World!';
   }
 
-  getReceivedMessages(): number | null {
-    const latestTemperature = this.receivedMessages.length > 0 ? this.receivedMessages[this.receivedMessages.length - 1] : null;
-    return latestTemperature;
+  // Function to get latest temperature
+  getReceivedMessages(): SensorData | null { // Return type modified
+    const latestData = this.receivedMessages.length > 0 ? this.receivedMessages[this.receivedMessages.length - 1] : null;
+    return latestData;
   }
 
+  // Calculates low/high of ALL received temperatures 
   calculateLowHighTemperature(): { low: number | null, high: number | null } {
     if (this.receivedMessages.length === 0) {
       return { low: null, high: null };
     }
 
-    const sortedTemperatures = this.receivedMessages.slice().sort((a, b) => a - b);
-    const low = sortedTemperatures[0];
-    const high = sortedTemperatures[sortedTemperatures.length - 1];
+    const allTemperatures = this.receivedMessages.map(data => data.temp);
+    const sortedTemperatures = allTemperatures.sort((a, b) => a - b);
+    return {
+      low: sortedTemperatures[0],
+      high: sortedTemperatures[sortedTemperatures.length - 1]
+    };
+  }
 
-    return { low, high };
+  getLatestRainPercentage(): number | null {
+    const latestData = this.getReceivedMessages();
+    if (!latestData || !latestData.rain_gauge) {
+      return null;
+    }
+    const MAX_VOLUME = 20; // Milliliters
+    const fillPercentage = (latestData.rain_gauge.volume / MAX_VOLUME) * 100;
+    return fillPercentage;
+  }
+
+  getLatestHumidity(): number | null {
+    const latestData = this.getReceivedMessages();
+    return latestData ? latestData.humidity.base : null;
+  }
+
+  getLatestWindSpeed(): number | null {
+    const latestData = this.getReceivedMessages();
+
+    if (!latestData) {
+      return null;
+    }
+
+    const windSpeedKmh = latestData.wind_speed * 3.6; // Conversion from m/s to km/h
+    return windSpeedKmh;
+  }
+
+  getLatestPump(): number | null {
+    const latestData = this.getReceivedMessages();
+    return latestData ? latestData.pump.temperature : null;
+  }
+
+  getLatestWatertank(): number | null {
+    const latestData = this.getReceivedMessages();
+    return latestData ? latestData.water_tank : null;
+  }
+
+  getLatestFertilizer(): number | null {
+    const latestData = this.getReceivedMessages();
+    return latestData ? latestData.fertilizer : null;
   }
 }
